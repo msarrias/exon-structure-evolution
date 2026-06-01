@@ -160,6 +160,10 @@ def populate_ensembl_uniprot_mapping(
             uniprot_ensembl_cross_reference
             ) VALUES (?, ?, ?, ?, ?)
             """, list(ensembl_uniprot_mapping))
+    logger.info(
+        f"Inserted {len(ensembl_genes_and_transcripts)} gene-transcript pairs "
+        f"and {len(ensembl_uniprot_mapping)} gene-UniProt mappings"
+    )
 
 
 def populate_transcript_uniprot_isoform_mapping(
