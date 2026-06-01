@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TARGET_DIRECTORY='/home/mahe9165/exonize/data/ensembl/v115/'
+TARGET_DIRECTORY='/home/mahe9165/exon-structure-evolution/data/ensembl/v115/'
 
 mkdir -p "$TARGET_DIRECTORY"
 
