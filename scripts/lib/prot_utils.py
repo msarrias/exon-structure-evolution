@@ -7,10 +7,10 @@ from pathlib import Path
 from Bio import SeqIO
 import gzip
 import sys
-from prot_sql_utils import (insert_into_cdss_table,
+from lib.prot_sql_utils import (insert_into_cdss_table,
                             insert_into_mrna_transcripts_table,
                             query_filtered_ecod_hmm_mrna_records)
-from ecod_hmm_search_utils import verify_f_group_matches_are_non_overlapping
+from lib.ecod_hmm_search_utils import verify_f_group_matches_are_non_overlapping
 
 
 def read_genome(
