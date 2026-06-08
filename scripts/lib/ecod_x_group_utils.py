@@ -5,7 +5,7 @@ from collections import defaultdict
 import portion as P
 from pathlib import Path
 from ecod_x_group_sql_utils import query_x_group_ids_names
-from ecod_hmm_search_utils import (
+from lib.ecod_hmm_search_utils import (
     min_perc_overlap,
     get_coordinates_list,
     get_p_coordinates_list_union
