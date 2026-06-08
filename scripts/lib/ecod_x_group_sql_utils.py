@@ -84,6 +84,21 @@ def query_for_cds(
         return cursor.fetchall()
 
 
+def query_for_mrna(
+        db_path: Path
+) -> list:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute("""
+        SELECT 
+            GeneID, 
+            TranscriptID, 
+            ProteinSequence
+        FROM Gene_Transcript_Proteins
+        """)
+        return cursor.fetchall()
+
+
 def query_x_group_ids_names(
         db_path: str,
 ):
