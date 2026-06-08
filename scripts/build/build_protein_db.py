@@ -29,13 +29,6 @@ def args_parser():
     return parser.parse_args()
 
 
-def read_pkl_file(
-        file_path: str,
-) -> dict:
-    with open(file_path, 'rb') as handle:
-        read_file = pickle.load(handle)
-    return read_file
-
 
 def main():
     args = args_parser()
