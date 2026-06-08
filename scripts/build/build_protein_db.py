@@ -1,6 +1,6 @@
 import argparse
-from prot_utils import *
-from prot_sql_utils import *
+from lib.prot_utils import *
+from lib.prot_sql_utils import *
 
 
 def args_parser():

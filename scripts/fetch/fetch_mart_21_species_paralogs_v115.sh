@@ -15,7 +15,7 @@ species=(
     btaurus
     sscrofa
     mdomestica
-    # oanatinus
+    oanatinus
     tguttata
     ggallus
     acarolinensis
