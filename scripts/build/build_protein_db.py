@@ -1,6 +1,7 @@
 import argparse
-from lib.prot_utils import *
-from lib.prot_sql_utils import *
+from pathlib import Path
+from lib.prot_utils import populate_cds_and_mrna_tables, read_pkl_file, read_genome
+from lib.protein_db_sql_utils import create_mrna_transcripts_cds_tables
 
 
 def args_parser():
