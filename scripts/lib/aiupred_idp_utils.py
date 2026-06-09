@@ -1,14 +1,9 @@
 import argparse
-from subprocess import run
-from Bio import SeqIO
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from collections.abc import Sequence, Iterator
-from typing import Tuple, List, Union, Any, Optional, Sequence, Iterator
-import os
-import tempfile
 import pickle
-from aiupred_idp_sqlite_utils import *
+from collections.abc import Iterator
+from typing import Union
+import portion as P
+from lib.aiupred_idp_sqlite_utils import insert_aiupred_scores
 import aiupred
 
 
