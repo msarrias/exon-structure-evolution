@@ -1,22 +1,27 @@
 import sqlite3
-import os
 from collections import defaultdict
 import portion as P
 
 
-def check_if_table_exists(
-        db_path: str,
-        table_name: str,
-) -> bool:
+def check_if_table_exists(db_path: str, table_name: str) -> bool:
     with sqlite3.connect(db_path) as db:
         cursor = db.cursor()
-        cursor.execute("""
-        SELECT 
-            name
-        FROM sqlite_master 
-        WHERE type='table';
-        """)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         return any(table_name == col[0] for col in cursor.fetchall())
+
+
+def check_if_column_exists(db_path: str, table_name: str, column_name: str) -> bool:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        return any(column_name == col[1] for col in cursor.fetchall())
+
+
+def check_if_empty_table(db_path: str, table_name: str) -> bool:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        return cursor.fetchone()[0] == 0
 
 
 def add_column_to_table(
@@ -24,192 +29,138 @@ def add_column_to_table(
         table_name: str,
         column_name: str,
         column_type: str,
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            f"""
-            ALTER TABLE {table_name}
-            ADD COLUMN {column_name} {column_type}
-            """
-        )
-
-
-def check_if_column_exists(
-        db_path: str,
-        table_name: str,
-        column_name: str
-) -> bool:
+) -> None:
     with sqlite3.connect(db_path) as db:
-        cursor = db.cursor()
-        cursor.execute(f"""
-        PRAGMA table_info({table_name})
-        """)
-        return any(column_name == col[1] for col in cursor.fetchall())
-
-
-def check_if_empty_table(
-        db_path: str,
-        table_name: str,
-) -> bool:
-    with sqlite3.connect(db_path) as db:
-        cursor = db.cursor()
-        cursor.execute(f"""
-        SELECT COUNT(*) FROM {table_name}
-        """)
-        return cursor.fetchone()[0] == 0
-
-
-def create_aiupred_table(
-        db_path: str,
-        anchor: bool
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        if anchor:
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS aiupred_protein_sequences_scores (
-                GeneID TEXT NOT NULL ,
-                TranscriptID VARCHAR(100) PRIMARY KEY,
-                IUPRED2 TEXT NOT NULL,
-                ANCHOR2 TEXT NOT NULL
-                ); 
-                """)
-        else:
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS aiupred_protein_sequences_scores (
-                GeneID TEXT NOT NULL ,
-                TranscriptID VARCHAR(100) PRIMARY KEY,
-                IUPRED2 TEXT NOT NULL
-                ); 
-                """)
+        db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 def copy_table_between_data_bases(
-        target_db_path,
-        source_db_path,
-        table_name: str
-):
+        target_db_path: str,
+        source_db_path: str,
+        table_name: str,
+) -> None:
     with sqlite3.connect(target_db_path) as target_conn, sqlite3.connect(source_db_path) as source_conn:
         target_cursor = target_conn.cursor()
         source_cursor = source_conn.cursor()
-        source_cursor.execute(f"""
-        SELECT 
-            sql 
-        FROM sqlite_master 
-        WHERE type='table' AND name="{table_name}";
-        """)
+        source_cursor.execute(
+            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+        )
         create_table_sql = source_cursor.fetchone()[0]
-        # Fetch all data from the source table
-        source_cursor.execute(f"""SELECT * FROM {table_name}""")
+        source_cursor.execute(f"SELECT * FROM {table_name}")
         rows = source_cursor.fetchall()
         target_cursor.execute(create_table_sql)
         for row in rows:
-            placeholders = ', '.join('?' * len(row))
-            target_cursor.execute(
-                f"""INSERT INTO {table_name} VALUES ({placeholders})""",
-                row
-            )
+            placeholders = ", ".join("?" * len(row))
+            target_cursor.execute(f"INSERT INTO {table_name} VALUES ({placeholders})", row)
 
 
-def create_representative_cds_human_table(
-        db_path: str,
-        anchor: bool
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+def create_index_on_table(db_path: str, table_name: str, column_name: str) -> None:
+    with sqlite3.connect(db_path) as db:
+        db.execute(f"CREATE INDEX IF NOT EXISTS {column_name}_index ON {table_name}({column_name})")
+
+
+def create_aiupred_table(db_path: str, anchor: bool) -> None:
+    with sqlite3.connect(db_path) as db:
         if anchor:
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS Representative_CDSs (
-                CdsID INTEGER PRIMARY KEY AUTOINCREMENT,
-                GeneID VARCHAR(100) NOT NULL,
-                CdsStart INTEGER NOT NULL,
-                CdsEnd INTEGER NOT NULL,
-                CdsDnaSequence TEXT NOT NULL,
-                IUPRED2Scores TEXT NOT NULL,
-                ANCHOR2Scores TEXT NOT NULL,
-                PercentageOrderedRegion REAL NOT NULL,
-                PercentageOrderedAnchor REAL NOT NULL
-                ); 
-                """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS aiupred_protein_sequences_scores (
+                    GeneID TEXT NOT NULL,
+                    TranscriptID VARCHAR(100) PRIMARY KEY,
+                    IUPRED2 TEXT NOT NULL,
+                    ANCHOR2 TEXT NOT NULL
+                )
+            """)
         else:
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS Representative_CDSs (
-                CdsID INTEGER PRIMARY KEY AUTOINCREMENT,
-                GeneID VARCHAR(100) NOT NULL,
-                CdsStart INTEGER NOT NULL,
-                CdsEnd INTEGER NOT NULL,
-                CdsDnaSequence TEXT NOT NULL,
-                IUPRED2Scores TEXT NOT NULL,
-                PercentageOrderedRegion REAL NOT NULL
-                ); 
-                """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS aiupred_protein_sequences_scores (
+                    GeneID TEXT NOT NULL,
+                    TranscriptID VARCHAR(100) PRIMARY KEY,
+                    IUPRED2 TEXT NOT NULL
+                )
+            """)
 
 
-def insert_aiupred_scores(
-        db_path: str,
-        tuples_list: list[tuple[str, str, str]],
-        anchor: bool
-):
+def create_representative_cds_human_table(db_path: str, anchor: bool) -> None:
+    with sqlite3.connect(db_path) as db:
+        if anchor:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS Representative_CDSs (
+                    CdsID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    GeneID VARCHAR(100) NOT NULL,
+                    CdsStart INTEGER NOT NULL,
+                    CdsEnd INTEGER NOT NULL,
+                    CdsDnaSequence TEXT NOT NULL,
+                    IUPRED2Scores TEXT NOT NULL,
+                    ANCHOR2Scores TEXT NOT NULL,
+                    PercentageOrderedRegion REAL NOT NULL,
+                    PercentageOrderedAnchor REAL NOT NULL
+                )
+            """)
+        else:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS Representative_CDSs (
+                    CdsID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    GeneID VARCHAR(100) NOT NULL,
+                    CdsStart INTEGER NOT NULL,
+                    CdsEnd INTEGER NOT NULL,
+                    CdsDnaSequence TEXT NOT NULL,
+                    IUPRED2Scores TEXT NOT NULL,
+                    PercentageOrderedRegion REAL NOT NULL
+                )
+            """)
+
+
+def insert_aiupred_scores(db_path: str, tuples_list: list, anchor: bool) -> None:
     if anchor:
-        excecute_query = """
-            INSERT INTO aiupred_protein_sequences_scores (
+        query = """
+            INSERT INTO aiupred_protein_sequences_scores(
                 GeneID,
                 TranscriptID,
                 IUPRED2,
                 ANCHOR2
             )
             VALUES (?, ?, ?, ?)
-            """
+        """
     else:
-        excecute_query = """
-            INSERT INTO aiupred_protein_sequences_scores (
+        query = """
+            INSERT INTO aiupred_protein_sequences_scores(
                 GeneID,
                 TranscriptID,
                 IUPRED2
             )
             VALUES (?, ?, ?)
-            """
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        cursor.executemany(
-            excecute_query,
-            tuples_list
-        )
+        """
+    with sqlite3.connect(db_path) as db:
+        db.executemany(query, tuples_list)
 
 
-def insert_representative_cds(
-        db_path: str,
-        anchor: bool,
-        tuples_list: list
-) -> None:
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+def insert_representative_cds(db_path: str, anchor: bool, tuples_list: list) -> None:
+    with sqlite3.connect(db_path) as db:
         if anchor:
-            cursor.executemany("""
-            INSERT INTO Representative_CDSs (
-                GeneID,
-                CdsStart,
-                CdsEnd,
-                CdsDnaSequence,
-                IUPRED2Scores,
-                ANCHOR2Scores,
-                PercentageOrderedRegion,
-                PercentageOrderedAnchor
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            db.executemany("""
+                INSERT INTO Representative_CDSs (
+                    GeneID,
+                    CdsStart,
+                    CdsEnd,
+                    CdsDnaSequence,
+                    IUPRED2Scores,
+                    ANCHOR2Scores,
+                    PercentageOrderedRegion,
+                    PercentageOrderedAnchor
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, tuples_list)
         else:
-            cursor.executemany("""
-            INSERT INTO representative_CDSs (
-                GeneID,
-                CdsStart,
-                CdsEnd,
-                CdsDnaSequence,
-                IUPRED2Scores,
-                PercentageOrderedRegion
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
+            db.executemany("""
+                INSERT INTO Representative_CDSs (
+                    GeneID,
+                    CdsStart,
+                    CdsEnd,
+                    CdsDnaSequence,
+                    IUPRED2Scores,
+                    PercentageOrderedRegion
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
             """, tuples_list)
 
 
@@ -217,57 +168,46 @@ def update_mapping_IUPRED2_peptides_columns(
         db_path: str,
         anchor: bool,
         tuples_list: list,
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+) -> None:
+    with sqlite3.connect(db_path) as db:
         if anchor:
-            cursor.executemany("""
-            UPDATE Gene_CDS_Proteins
-            SET
-                MappingIUPRED2Peptides=?,
-                MappingANCHOR2Peptides=?,
-                PercentageOrderedRegion=?,
-                PercentageOrderedAnchor=?
-            WHERE CdsID=?
+            db.executemany("""
+                UPDATE Gene_CDS_Proteins
+                SET MappingIUPRED2Peptides=?,
+                    MappingANCHOR2Peptides=?,
+                    PercentageOrderedRegion=?,
+                    PercentageOrderedAnchor=?
+                WHERE CdsID=?
             """, tuples_list)
-
         else:
-            cursor.execute("""
-            UPDATE Gene_CDS_Proteins
-            SET 
-                MappingIUPRED2Peptides=?,
-                PercentageOrderedRegion=?
-            WHERE CdsID=?
+            db.executemany("""
+                UPDATE Gene_CDS_Proteins
+                SET MappingIUPRED2Peptides=?,
+                    PercentageOrderedRegion=?
+                WHERE CdsID=?
             """, tuples_list)
 
 
-def query_processed_transcripts(
-        db_path: str
-) -> list:
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        cursor.execute("""
-            SELECT DISTINCT
-                TranscriptID
-            FROM aiupred_protein_sequences_scores
-        """
-                       )
-        return [transcript_id[0] for transcript_id in cursor.fetchall()]
+def update_cdss_table(anchor: bool, db_path: str, cds_table_name: str) -> None:
+    """Add AIUPred score columns to Gene_CDS_Proteins table."""
+    add_column_to_table(db_path, cds_table_name, 'MappingIUPRED2Peptides', 'TEXT')
+    add_column_to_table(db_path, cds_table_name, 'PercentageOrderedRegion', 'REAL')
+    if anchor:
+        add_column_to_table(db_path, cds_table_name, 'MappingANCHOR2Peptides', 'TEXT')
+        add_column_to_table(db_path, cds_table_name, 'PercentageOrderedAnchor', 'REAL')
 
 
-def query_proteins_table(
-        db_path: str
-) -> defaultdict:
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        cursor.execute("""
-            SELECT 
-                GeneID,
-                TranscriptID,
-                ProteinSequence
-            FROM Gene_Transcript_Proteins
-        """
-                       )
+def query_processed_transcripts(db_path: str) -> list:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute("SELECT DISTINCT TranscriptID FROM aiupred_protein_sequences_scores")
+        return [row[0] for row in cursor.fetchall()]
+
+
+def query_proteins_table(db_path: str) -> defaultdict:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
+        cursor.execute("SELECT GeneID, TranscriptID, ProteinSequence FROM Gene_Transcript_Proteins")
         result = cursor.fetchall()
     proteins_dictionary = defaultdict(list)
     for gene_id, transcript, peptide_sequence in result:
@@ -275,12 +215,9 @@ def query_proteins_table(
     return proteins_dictionary
 
 
-def query_protein_scores_table(
-        db_path: str,
-        anchor: bool
-) -> defaultdict:
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+def query_protein_scores_table(db_path: str, anchor: bool) -> dict:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
         if anchor:
             cursor.execute("""
                 SELECT 
