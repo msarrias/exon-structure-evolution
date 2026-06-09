@@ -236,148 +236,85 @@ def query_protein_scores_table(db_path: str, anchor: bool) -> dict:
                 FROM aiupred_protein_sequences_scores
             """)
         result = cursor.fetchall()
-    proteins_score_dictionary = defaultdict(lambda: defaultdict(list))
+
+    scores = {}
     if anchor:
         for gene_id, transcript, iupred2, anchor2 in result:
-            proteins_score_dictionary[gene_id][transcript] = [iupred2, anchor2]
+            if gene_id not in scores:
+                scores[gene_id] = {}
+            scores[gene_id][transcript] = [iupred2, anchor2]
     else:
         for gene_id, transcript, iupred2 in result:
-            proteins_score_dictionary[gene_id][transcript] = [iupred2, None]
-    return proteins_score_dictionary
+            if gene_id not in scores:
+                scores[gene_id] = {}
+            scores[gene_id][transcript] = [iupred2, None]
+    return scores
 
-
-def query_gene_cdss(
-        db_path: str,
-) -> defaultdict:
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+def query_gene_cdss(db_path: str) -> defaultdict:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
         cursor.execute("""
-            SELECT 
-                DISTINCT 
+            SELECT
+                DISTINCT
                 GeneID,
                 TranscriptID,
                 PeptideCdsStart,
                 PeptideCdsEnd,
                 CdsID
             FROM Gene_CDS_Proteins
-        """
-                       )
+        """)
         result = cursor.fetchall()
-    gene_cdss_dictionary = defaultdict(lambda: defaultdict(list))
-    for gene_id, transcript_id, peptide_cds_start, peptide_cds_end, cds_id in result:
-        gene_cdss_dictionary[gene_id][transcript_id].append([
-            P.open(peptide_cds_start, peptide_cds_end), cds_id
-        ])
-    return gene_cdss_dictionary
+    gene_cdss = defaultdict(lambda: defaultdict(list))
+    for gene_id, transcript_id, pep_start, pep_end, cds_id in result:
+        gene_cdss[gene_id][transcript_id].append([P.open(pep_start, pep_end), cds_id])
+    return gene_cdss
 
 
-def query_protein_scores(
-        db_path: str,
-        anchor: bool
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
+def query_protein_scores(db_path: str, anchor: bool) -> list:
+    with sqlite3.connect(db_path) as db:
+        cursor = db.cursor()
         if anchor:
             cursor.execute("""
-            SELECT 
-                TranscriptID,
-                IUPRED2,
-                ANCHOR2
-            FROM aiupred_protein_sequences_scores
-            """)
+                           SELECT
+                               TranscriptID,
+                               IUPRED2,
+                               ANCHOR2
+                           FROM aiupred_protein_sequences_scores
+                           """)
         else:
             cursor.execute("""
-            SELECT 
-                TranscriptID,
-                IUPRED2
-            FROM aiupred_protein_sequences_scores
-            """)
+                           SELECT
+                               TranscriptID,
+                               IUPRED2
+                           FROM aiupred_protein_sequences_scores
+                           """)
         return cursor.fetchall()
 
 
-def update_cdss_table(
-        anchor: bool,
-        db_path: str,
-        cds_table_name: str,
-):
-    if anchor:
-        add_column_to_table(
-            db_path=db_path,
-            table_name=cds_table_name,
-            column_name='MappingIUPRED2Peptides',
-            column_type='TEXT'
-        )
-        add_column_to_table(
-            db_path=db_path,
-            table_name=cds_table_name,
-            column_name='MappingANCHOR2Peptides',
-            column_type='TEXT'
-        )
-        add_column_to_table(
-            db_path=db_path,
-            table_name=cds_table_name,
-            column_name='PercentageOrderedRegion',
-            column_type='REAL'
-        )
-        add_column_to_table(
-            db_path=db_path,
-            table_name=cds_table_name,
-            column_name='PercentageOrderedAnchor',
-            column_type='REAL'
-        )
-
-
-def create_index_on_table(
-        db_path: str,
-        table_name: str,
-        column_name: str
-):
-    with sqlite3.connect(db_path) as connection:
-        cursor = connection.cursor()
-        cursor.execute(f"""
-        CREATE INDEX {column_name}_index
-        ON {table_name}({column_name})
-        """)
-
-
-def query_raw_cds_scores(
-        path_db: str
-) -> dict:
-    with sqlite3.connect(path_db) as connection:
-        cursor = connection.cursor()
+def query_raw_cds_scores(path_db: str) -> dict:
+    with sqlite3.connect(path_db) as db:
+        cursor = db.cursor()
         cursor.execute("""
-        SELECT 
-            GeneID,
-            CdsFrame,
-            CdsStart,
-            CdsEnd,
-            CdsDnaSequence,
-            MappingIUPRED2Peptides,
-            MappingANCHOR2Peptides,
-            MAX(PercentageOrderedRegion) AS PercentageOrderedRegion,
-            PercentageOrderedAnchor
-        FROM 
-        Gene_CDS_Proteins
-        GROUP BY GeneID, CdsStart, CdsEnd
+            SELECT
+                GeneID,
+                CdsFrame,
+                CdsStart,
+                CdsEnd,
+                CdsDnaSequence,
+                MappingIUPRED2Peptides,
+                MappingANCHOR2Peptides,
+                MAX(PercentageOrderedRegion) AS PercentageOrderedRegion,
+                PercentageOrderedAnchor
+            FROM Gene_CDS_Proteins
+            GROUP BY GeneID, CdsStart, CdsEnd
         """)
         records = cursor.fetchall()
-        cdss_dictionary = defaultdict(lambda: defaultdict(list))
-        for (gene_id,
-             cds_frame,
-             cds_start,
-             cds_end,
-             cds_dna_seq,
-             mapping_IUPRED2_peptides,
-             mapping_ANCHOR2_peptides,
-             perc_ordered_region,
-             perc_ordered_region_anchor
-             ) in records:
-            cdss_dictionary[gene_id][P.open(cds_start, cds_end)] = [
-                cds_dna_seq,
-                mapping_IUPRED2_peptides,
-                mapping_ANCHOR2_peptides,
-                perc_ordered_region,
-                perc_ordered_region_anchor
-            ]
-
-        return cdss_dictionary
+    cdss_dictionary = defaultdict(lambda: defaultdict(list))
+    for (gene_id, _, cds_start, cds_end, cds_dna_seq,
+         mapping_iupred2, mapping_anchor2,
+         perc_ordered, perc_ordered_anchor) in records:
+        cdss_dictionary[gene_id][P.open(cds_start, cds_end)] = [
+            cds_dna_seq, mapping_iupred2, mapping_anchor2,
+            perc_ordered, perc_ordered_anchor
+        ]
+    return cdss_dictionary
