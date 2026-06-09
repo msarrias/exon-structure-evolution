@@ -22,24 +22,19 @@ def argument_parser():
     parser.add_argument(
         'gene_hierarchy_path',
         type=str,
-        help='exonize database path',
-    )
-    parser.add_argument(
-        'iupred3_path',
-        type=str,
-        help='path to iupred3.py',
+        help='gene hierarchy pickle path',
     )
     parser.add_argument(
         '--output-db-path',
         type=str,
-        default='iupred3_protein_scores.db',
+        default='aiupred_protein_scores.db',
         help='output database path'
     )
     parser.add_argument(
         '--anchor',
         action='store_true',
         default=False,
-        help='enable ANCHOR2 prediction',
+        help='enable ANCHOR2 binding region prediction',
     )
     parser.add_argument(
         '--min-exon-length',
@@ -48,118 +43,52 @@ def argument_parser():
         help='minimum exon length for CDS coordinates',
     )
     parser.add_argument(
-        '--smoothing',
-        type=str,
-        default="medium",
-        help='smoothing type: "no", "medium" or "strong". Default is "medium"',
-    )
-    parser.add_argument(
-        '--iupred-type',
-        type=str,
-        default='long',
-        help='Analysis type: "long", "short" or "glob"',
-    )
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=5,
-        help='batch size for processing the sequences',
-    )
-    parser.add_argument(
         '--ordered-score-threshold',
         type=float,
         default=0.5,
-        help='threshold for considering a protein as ordered',
+        help='threshold for considering a residue as ordered (score <= threshold)',
     )
-    args = parser.parse_args()
-    if args.iupred_type not in ['long', 'short', 'glob']:
-        raise ValueError(
-            'Analysis type (--iupred-type) must be either long, short or glob!'
-        )
-    if args.smoothing not in ['no', 'medium', 'strong']:
-        raise ValueError(
-            'Smoothing (--smoothing) must be either no, medium or strong!'
-        )
-    return args
+    return parser.parse_args()
+
+
+def run_aiupred(
+        sequence: str,
+        anchor: bool,
+) -> list:
+    """
+    Run AIUPred disorder prediction on a protein sequence.
+    Returns list of score strings in '_'-joined format matching
+    the existing database schema.
+
+    Replaces run_iupred3() + parse_iupred3_output() from the
+    original IUPred3-based pipeline.
+    """
+    predictor = aiupred.AIUPred()
+    disorder_scores = predictor.predict_disorder(sequence)
+    iupred_scores = "_".join(str(round(float(s), 4)) for s in disorder_scores)
+    if anchor:
+        anchor_scores = predictor.predict_binding(sequence)
+        anchor_scores_str = "_".join(str(round(float(s), 4)) for s in anchor_scores)
+        return [iupred_scores, anchor_scores_str]
+    return [iupred_scores]
+
 
 
 def read_pkl_file(
         file_path: str,
 ) -> dict:
     with open(file_path, 'rb') as handle:
-        read_file = pickle.load(handle)
-    return read_file
-
-
-def dump_sequence_dictionary_into_fasta_file(
-        out_file_path: str,
-        sequence_dictionary: dict
-) -> None:
-    with open(out_file_path, "w") as handle:
-        for annotation_id, annotation_sequence in sequence_dictionary.items():
-            record = SeqRecord(
-                Seq(annotation_sequence),
-                id=str(annotation_id),
-                description=''
-            )
-            SeqIO.write(record, handle, "fasta")
-
-
-def run_iupred3(
-        iupred3_path: str,
-        input_fasta_path: str,
-        iupred_type: str,
-        anchor: bool,
-        smoothing: str,
-):
-    iupred_call = [
-        'python3',
-        iupred3_path,
-        input_fasta_path,
-        iupred_type,
-        '-a' if anchor else '',
-        '-s', smoothing
-    ]
-    result = run(
-        iupred_call,
-        capture_output=True,
-        text=True
-    )
-    return result
-
-
-def parse_iupred3_output(
-        subprocess_result,
-        anchor: bool
-) -> list:
-    scores_list = []
-    anchor_list = []
-    for line in subprocess_result.stdout.split('\n'):
-        if not line.startswith('#') and line.strip():
-            parts = line.split('\t')
-            if len(parts) > 1:
-                if anchor:
-                    anchor_list.append(parts[-1])
-                    scores_list.append(parts[-2])
-                else:
-                    scores_list.append(parts[-1])
-    if anchor:
-        return ['_'.join(scores_list), '_'.join(anchor_list)]
-    return ['_'.join(scores_list)]
+        return pickle.load(handle)
 
 
 def even_batches(
-            data: list,
-            number_of_batches: int = 1,
+        data: list,
+        number_of_batches: int = 1,
 ) -> Iterator[list]:
     """
     Given a list and a number of batches, returns 'number_of_batches'
-     consecutive subsets elements of 'data' of even size each, except
-     for the last one whose size is the remainder of the division of
-    the length of 'data' by 'number_of_batches'.
+    consecutive subsets of 'data' of even size each.
     """
-    # We round up to the upper integer value to guarantee that there
-    # will be 'number_of_batches' batches
     even_batch_size = (len(data) // number_of_batches) + 1
     for batch_number in range(number_of_batches):
         batch_start_index = batch_number * even_batch_size
@@ -168,115 +97,93 @@ def even_batches(
 
 
 def process_gene_transcripts_and_update_database(
-        list_transcripts_batch,
+        list_transcripts_batch: list,
         gene_transcripts_dictionary: dict,
-        iupred3_path: str,
-        iupred_type: str,
         anchor: bool,
-        smoothing: str,
-        output_db_path: str
+        output_db_path: str,
 ) -> None:
     """
-    Processes gene transcripts in batches, runs iupred3 on each,
-     and updates the database with the scores.
-    :param list_transcripts_batch:
-    :param gene_transcripts_dictionary: Dictionary of gene transcripts.
-    :param iupred3_path: Path to the iupred3 executable.
-    :param iupred_type: The type parameter for iupred3.
-    :param anchor: The anchor parameter for iupred3.
-    :param smoothing: The smoothing parameter for iupred3.
-    :param output_db_path: Path to the database where the results will be stored.
+    Run AIUPred on each transcript in the batch and store scores.
+
+    Replaces the original version which called IUPred3 via subprocess
+    and wrote temporary FASTA files. AIUPred is now called directly
+    as a Python library — no temp files needed.
     """
     for transcript in list_transcripts_batch:
-        tuples_to_insert = []
         gene_id, peptide_sequence = gene_transcripts_dictionary[transcript]
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            fasta_path = os.path.join(temporary_directory, 'seq.fa')
-            dump_sequence_dictionary_into_fasta_file(
-                out_file_path=fasta_path,
-                sequence_dictionary={transcript: peptide_sequence}
-            )
-            iupred3_out = run_iupred3(
-                iupred3_path=iupred3_path,
-                input_fasta_path=fasta_path,
-                iupred_type=iupred_type,
+        try:
+            scores = run_aiupred(
+                sequence=peptide_sequence,
                 anchor=anchor,
-                smoothing=smoothing
             )
-            iupred3_scores = parse_iupred3_output(
-                subprocess_result=iupred3_out,
-                anchor=anchor
+        except Exception as e:
+            print(f"AIUPred failed for {transcript}: {e}")
+            continue
+        if not any(s == '' for s in scores):
+            insert_aiupred_scores(
+                db_path=output_db_path,
+                tuples_list=[(gene_id, transcript, *scores)],
+                anchor=anchor,
             )
-            if not any(seq == '' for seq in iupred3_scores):
-                tuples_to_insert.append(
-                    (gene_id, transcript, *iupred3_scores)
-                )
-        insert_iupred3_scores(
-            db_path=output_db_path,
-            tuples_list=tuples_to_insert,
-            anchor=anchor
-        )
 
 
-def parse_scores_string(
-        probability_string: str,
-) -> list:
-    probabilities = [float(prob) for prob in probability_string.split('_') if prob]
-    return probabilities
+def parse_scores_string(probability_string: str) -> list:
+    return [float(prob) for prob in probability_string.split('_') if prob]
 
 
-def scores_to_string(scores_list):
+def scores_to_string(scores_list: list) -> str:
     return '_'.join([str(score) for score in scores_list])
 
 
 def get_ordered_scores_percentage(
         scores_list: list,
-        threshold: float
+        threshold: float,
 ) -> float:
-    return round(len([score for score in scores_list if score <= threshold])/len(scores_list), 3)
+    return round(
+        len([s for s in scores_list if s <= threshold]) / len(scores_list), 3
+    )
 
 
 def update_scores_cds_mapping(
         gene_cdss_dictionary: dict,
         protein_scores_dictionary: dict,
         anchor: bool,
-        ordered_score_threshold: float
-):
+        ordered_score_threshold: float,
+) -> list:
     tuples_to_insert = []
     for gene_id, transcript_dictionary in gene_cdss_dictionary.items():
         for transcript_id, cdss_list in transcript_dictionary.items():
             iupred_scores, anchor_scores = protein_scores_dictionary[gene_id][transcript_id]
-            scores_list = parse_scores_string(
-                probability_string=iupred_scores
-            )
+            scores_list = parse_scores_string(probability_string=iupred_scores)
             if anchor:
-                scores_list_anchor = parse_scores_string(
-                    probability_string=anchor_scores
-                )
+                scores_list_anchor = parse_scores_string(probability_string=anchor_scores)
                 tuples_to_insert.extend([
-                    (scores_to_string(scores_list[pep_cds_coord.lower: pep_cds_coord.upper]),
-                     scores_to_string(scores_list_anchor[pep_cds_coord.lower: pep_cds_coord.upper]),
-                     get_ordered_scores_percentage(
-                         scores_list=scores_list[pep_cds_coord.lower: pep_cds_coord.upper],
-                         threshold=ordered_score_threshold
-                     ),
-                     get_ordered_scores_percentage(
-                         scores_list=scores_list_anchor[pep_cds_coord.lower: pep_cds_coord.upper],
-                         threshold=ordered_score_threshold
-                     ),
-                     cds_id)
+                    (
+                        scores_to_string(scores_list[pep_cds_coord.lower: pep_cds_coord.upper]),
+                        scores_to_string(scores_list_anchor[pep_cds_coord.lower: pep_cds_coord.upper]),
+                        get_ordered_scores_percentage(
+                            scores_list=scores_list[pep_cds_coord.lower: pep_cds_coord.upper],
+                            threshold=ordered_score_threshold
+                        ),
+                        get_ordered_scores_percentage(
+                            scores_list=scores_list_anchor[pep_cds_coord.lower: pep_cds_coord.upper],
+                            threshold=ordered_score_threshold
+                        ),
+                        cds_id,
+                    )
                     for pep_cds_coord, cds_id in cdss_list
                     if pep_cds_coord
                 ])
             else:
                 tuples_to_insert.extend([
-                    (scores_to_string(scores_list[pep_cds_coord.lower: pep_cds_coord.upper]),
-                     get_ordered_scores_percentage(
-                         scores_list=scores_list[pep_cds_coord.lower: pep_cds_coord.upper],
-                         threshold=ordered_score_threshold
-                     ),
-                     cds_id
-                     )
+                    (
+                        scores_to_string(scores_list[pep_cds_coord.lower: pep_cds_coord.upper]),
+                        get_ordered_scores_percentage(
+                            scores_list=scores_list[pep_cds_coord.lower: pep_cds_coord.upper],
+                            threshold=ordered_score_threshold
+                        ),
+                        cds_id,
+                    )
                     for pep_cds_coord, cds_id in cdss_list
                     if pep_cds_coord
                 ])
@@ -288,31 +195,6 @@ def get_candidate_cds_coordinates(
         gene_hierarchy_dictionary: dict,
         min_exon_length: int,
 ) -> dict:
-    """
-    get_candidate_cds_coordinates is a function that given a gene_id,
-    collects all the CDS coordinates with a length greater than the
-    minimum exon length across all transcript.
-    If there are overlapping CDS coordinates, they are resolved
-    according to the following criteria:
-
-    * If they overlap by more than the overlapping threshold
-      of both CDS lengths the one with the highest overlapping
-      percentage is selected.
-    * Both CDSs are selected otherwise
-
-    The rationale behind choosing the interval with the higher percentage
-    of overlap is that it will favor the selection of shorter intervals
-    reducing the exclusion of short duplications due to coverage thresholds.
-
-    :param gene_id: gene identifier
-    :param gene_hierarchy_dictionary: gene hierarchy dictionary
-    :param min_exon_length: minimum exon length
-    :return: list of representative CDS coordinates across all transcripts
-    """
-    # collect all CDS coordinates and frames across all transcripts
-    # we are interested in the frames to account for the unlikely event
-    # that two CDS with same coordinates in different transcripts
-    # have different frames
     cds_coordinates_and_frames: list[tuple[P.Interval, str]] = list(
         set(
             (coordinate, annotation_structure['frame'])
@@ -320,8 +202,8 @@ def get_candidate_cds_coordinates(
             for annotation_structure in mrna_annotation['structure']
             for coordinate in (annotation_structure['coordinate'],)
             if (
-                    annotation_structure['type'] == 'CDS' and
-                    (coordinate.upper - coordinate.lower) >= min_exon_length
+                annotation_structure['type'] == 'CDS' and
+                (coordinate.upper - coordinate.lower) >= min_exon_length
             )
         )
     )
@@ -387,18 +269,7 @@ def min_perc_overlap(
         intv_i: P.Interval,
         intv_j: P.Interval,
 ) -> float:
-    """
-    Given two intervals, the function returns the percentage of the overlapping
-    region relative to the longest interval. The percentage overlap of the shortest
-    interval will always be greater or equal than that of the longest interval.
-    :param intv_i:
-    :param intv_j:
-    :return:
-    """
-
-    def get_interval_length(
-            interval: P.Interval,
-    ):
+    def get_interval_length(interval: P.Interval):
         return sum(intv.upper - intv.lower for intv in interval)
     if intv_i.overlaps(intv_j):
         intersection_span = get_interval_length(intv_i.intersection(intv_j))
@@ -423,8 +294,8 @@ def get_first_overlapping_intervals(
         current_interval = sorted_intervals[first_overlap_index]
         next_interval = sorted_intervals[first_overlap_index + 1]
         if min_perc_overlap(
-                    intv_i=current_interval,
-                    intv_j=next_interval) >= overlapping_threshold:
+                intv_i=current_interval,
+                intv_j=next_interval) >= overlapping_threshold:
             return current_interval, next_interval
         first_overlap_index += 1
     return None, None
@@ -472,23 +343,24 @@ def get_overlap_percentage(
 
 
 def get_representative_cds_tuples(
-        gene_hierarchy_dictionary,
-        raw_scores_dict,
-        min_exon_length,
-):
+        gene_hierarchy_dictionary: dict,
+        raw_scores_dict: dict,
+        min_exon_length: int,
+) -> list:
     tuples_to_insert = []
-    gene_ids_list = list(gene_hierarchy_dictionary.keys())
-    for gene_id in gene_ids_list:
+    for gene_id in gene_hierarchy_dictionary:
         representative_cdss_dictionary = get_candidate_cds_coordinates(
             gene_id=gene_id,
             gene_hierarchy_dictionary=gene_hierarchy_dictionary,
             min_exon_length=min_exon_length
         )
         if representative_cdss_dictionary:
-            gene_id = gene_id.rsplit('gene:')[1]
+            gene_id_trimmed = gene_id.rsplit('gene:')[1]
             for cds in representative_cdss_dictionary['candidates_cds_coordinates']:
-                if not raw_scores_dict[gene_id][cds]:
-                    print(gene_id, cds)
+                if not raw_scores_dict[gene_id_trimmed][cds]:
+                    print(gene_id_trimmed, cds)
                 tuples_to_insert.append(
-                    (gene_id, cds.lower, cds.upper, *raw_scores_dict[gene_id][cds]))
+                    (gene_id_trimmed, cds.lower, cds.upper,
+                     *raw_scores_dict[gene_id_trimmed][cds])
+                )
     return tuples_to_insert
